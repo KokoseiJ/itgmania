@@ -160,6 +160,7 @@ void MemoryCardDriverThreaded_Linux::GetUSBStorageDevices( vector<UsbStorageDevi
 			RageTimer WaitUntil;
 			WaitUntil += 5;
 			RString sQueueFilePath = usbd.sSysPath + "queue";
+			bool bDeviceUsable = false;
 			while(1)
 			{
 				if( WaitUntil.Ago() >= 0 )
@@ -176,27 +177,64 @@ void MemoryCardDriverThreaded_Linux::GetUSBStorageDevices( vector<UsbStorageDevi
 				}
 
 				if( access(sQueueFilePath, F_OK) != -1 )
+					bDeviceUsable = true;
 					break;
 
 				usleep(10000);
 			}
 
+			if (!bDeviceUsable) {
+				LOG->Warn( "Device %s no longer available! Skipping to next device...", 
+						usbd.sSysPath.c_str() );
+				continue;
+			}
+
 			/* Wait for udev to finish handling device node creation */
 			ExecuteCommand( "udevadm settle" );
 
-			/* Fix for RT kernel - just wait a second until mount finishes lol */
-			sleep(1);
+			/*
+			 * RT Kernel (specifically Liquorix) had an issue where partition probing is
+			 * not finished even after udevadm settle has returned 0.
+			 * Since most USBs will be formatted with partition table on it, wait for
+			 * a second looking for /sys/block/{dev}/{dev}1 folder.
+			 * If it doesn't appear in time, assume it doesn't come with one.
+			 * udevadm settle is used for waiting instead of fixed interval, to run the
+			 * check right after ongoing events have been finished.
+			 */
+			WaitUntil.Touch();
+			WaitUntil += 1;
+			RString sDevPartOne = usbd.sSysPath + sDevice + "1";
+			bDeviceUsable = true;
+			while (1) {
+				if( access(usbd.sSysPath, F_OK) == -1 )
+				{
+					LOG->Warn( "Block directory %s went away while we were waiting for %s",
+							usbd.sSysPath.c_str(), sDevPartOne.c_str() );
+					bDeviceUsable = false;
+					break;
+				}
 
-			/* If the first partition device exists, eg. /sys/block/uba/uba1, use it. */
-			if( access(usbd.sSysPath + sDevice + "1", F_OK) != -1 )
-			{
-				LOG->Trace("Partition 1 exists!");
-				usbd.sDevice = "/dev/" + sDevice + "1";
+				if ( access(sDevPartOne, F_OK) != -1 )
+				{
+					LOG->Trace( "%s exists, Using Partition 1", sDevPartOne.c_str());
+					usbd.sDevice = "/dev/" + sDevice + "1";
+					break;
+				}
+
+				if( WaitUntil.Ago() >= 0 )
+				{
+					LOG->Warn( "Failed to access %s: %s", sDevPartOne.c_str(), strerror(errno) );
+					usbd.sDevice = "/dev/" + sDevice;
+					break;
+				}
+
+				ExecuteCommand( "udevadm settle" );
 			}
-			else
-			{
-				LOG->Trace("Failed to access partition 1: %s", strerror(errno));
-				usbd.sDevice = "/dev/" + sDevice;
+
+			if (!bDeviceUsable) {
+				LOG->Warn( "Device %s no longer available! Skipping to next device...", 
+						usbd.sSysPath.c_str() );
+				continue;
 			}
 
 			/*
