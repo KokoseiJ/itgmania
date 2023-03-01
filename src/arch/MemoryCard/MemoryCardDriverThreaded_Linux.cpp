@@ -184,15 +184,18 @@ void MemoryCardDriverThreaded_Linux::GetUSBStorageDevices( vector<UsbStorageDevi
 			/* Wait for udev to finish handling device node creation */
 			ExecuteCommand( "udevadm settle" );
 
+			/* Fix for RT kernel - just wait a second until mount finishes lol */
+			sleep(1);
+
 			/* If the first partition device exists, eg. /sys/block/uba/uba1, use it. */
 			if( access(usbd.sSysPath + sDevice + "1", F_OK) != -1 )
 			{
-				LOG->Trace("OK");
+				LOG->Trace("Partition 1 exists!");
 				usbd.sDevice = "/dev/" + sDevice + "1";
 			}
 			else
 			{
-				LOG->Trace("error %s", strerror(errno));
+				LOG->Trace("Failed to access partition 1: %s", strerror(errno));
 				usbd.sDevice = "/dev/" + sDevice;
 			}
 
