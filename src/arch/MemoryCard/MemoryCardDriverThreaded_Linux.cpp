@@ -192,6 +192,16 @@ void MemoryCardDriverThreaded_Linux::GetUSBStorageDevices( vector<UsbStorageDevi
 			/* Wait for udev to finish handling device node creation */
 			ExecuteCommand( "udevadm settle" );
 
+			/* Some setups show blocks where there is no mounted device for some reason */
+			/* Check the size to see if the device has size > 0 */
+			if (!ReadFile( usbd.sSysPath + "size", sBuf) )
+				continue;
+			if( atol(sBuf) == 0 ) {
+				LOG->Warn( "Device %s has a zero size! Skipping to next device...",
+						usbd.sSysPath.c_str() );
+				continue;
+			}
+
 			/*
 			 * RT Kernel (specifically Liquorix) had an issue where partition probing is
 			 * not finished even after udevadm settle has returned 0.
